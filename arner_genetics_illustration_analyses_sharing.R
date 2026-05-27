@@ -26,13 +26,122 @@ library(googlesheets4)
 ############################################################
 interviews=read.csv('~/Library/CloudStorage/Box-Box/Audrey/Lab/genetics_illustrations/Illustrations2025_DATA_2025-09-04_1400.csv')
 
-traditional=read.csv('~/Library/CloudStorage/Box-Box/Lea Lab/Audrey_Arner/Lab/Malaysia/data/old/oahelp/data/traditional_lifestyle.csv')
-medical=read.csv('~/Library/CloudStorage/Box-Box/Lea Lab/Audrey_Arner/Lab/Malaysia/data/old/oahelp/data/medical.csv')
-personal=read.csv('~/Library/CloudStorage/Box-Box/Lea Lab/Audrey_Arner/Lab/Malaysia/data/old/oahelp/data/personal_information.csv')
-urb_score=read.csv('~/Library/CloudStorage/Box-Box/Audrey/Lab/RNAseq/OAHeLP_location_urbanicity_scores_2026-02-18.txt', sep = "\t")
+traditional=read.csv('~/Library/CloudStorage/Box-Box/Lea Lab/Audrey_Arner/Lab/Malaysia/data/oahelp/data/traditional_lifestyle.csv')
+medical=read.csv('~/Library/CloudStorage/Box-Box/Lea Lab/Audrey_Arner/Lab/Malaysia/data/oahelp/data/medical.csv')
+personal=read.csv('~/Library/CloudStorage/Box-Box/Lea Lab/Audrey_Arner/Lab/Malaysia/data/oahelp/data/personal_information.csv')
+urb_score=read.delim("~/Library/CloudStorage/Box-Box/Audrey/Lab/RNAseq/OAHeLP_location_urbanicity_scores_2025-03-08.txt")
+register = read.delim("~/Library/CloudStorage/Box-Box/Audrey/Lab/genetics_illustrations/oa_village_register.csv", sep = ",")
 
-oa_data = left_join(medical, personal, by = "rid", suffix = c(".medical", ".personal")) #join data
-oa_data = left_join(traditional, oa_data, by = "rid") #join data
+personal=personal[!duplicated(personal$rid),]
+medical=medical[!(is.na(medical$tid) | duplicated(medical$rid)),]
+table(table(medical$rid))
+#get ethnicity for meta data
+compile_ethnic <- function(personal_info = NULL, med = NULL){
+  if(is.null(personal_info)) stop("ERROR: Must include valid dataframe as population register")
+  
+  # add medical visit village for contextualizing info
+  personal_info$interview_location_med <- med$interview_location_med[match(personal_info$rid, med$rid)]
+  personal_info$other_ethnicity[which(personal_info$birth_place_state_other == "BugIS INDONESIA")] <- "Bugis"
+  
+  # First, deal with "Other" category by standardizing to fewer number of categories
+  personal_info$other_ethnicity <- tolower(personal_info$other_ethnicity)
+  
+  personal_info$other_ethnicity[which(personal_info$other_ethnicity %in% c("bidayuh"))]<-'Bidayuh'
+  personal_info$other_ethnicity[which(personal_info$other_ethnicity %in% c("bugis"))]<-'Bugis'
+  personal_info$other_ethnicity[which(personal_info$other_ethnicity %in% c("dayak, orang melayu"))]<-'Dayak_Malay'
+  personal_info$other_ethnicity[which(personal_info$other_ethnicity %in% c("dusun"))]<-'Dusun'
+  personal_info$other_ethnicity[which(personal_info$other_ethnicity %in% c("iban"))]<-'Iban'
+  personal_info$other_ethnicity[which(personal_info$other_ethnicity %in% c("father indo", "indo", "indonesia", "indonesian"))]<-'Indonesian'
+  personal_info$other_ethnicity[which(personal_info$other_ethnicity %in% c("jah hut", "jahut"))]<-'Jahut'
+  personal_info$other_ethnicity[which(personal_info$other_ethnicity %in% c("jahut dan cewang"))]<-'Jahut_Cewang'
+  personal_info$other_ethnicity[which(personal_info$other_ethnicity %in% c("kentak", "kintaq"))]<-'Kintaq'
+  personal_info$other_ethnicity[which(personal_info$other_ethnicity %in% c("lano"))]<-'Lanoh'
+  personal_info$other_ethnicity[which(personal_info$other_ethnicity %in% c("mah meri"))]<-'MahMeri'
+  personal_info$other_ethnicity[which(personal_info$other_ethnicity %in% c("melayu", "orang melayu"))]<-'Malay'
+  personal_info$other_ethnicity[which(personal_info$other_ethnicity %in% c("murut"))]<-'Murut'
+  personal_info$other_ethnicity[which(personal_info$other_ethnicity %in% c("kensiu"))]<-'Kensiu'
+  personal_info$other_ethnicity[which(personal_info$other_ethnicity %in% c("kensiu, melayu (father)"))]<-'Kensiu_Malay'
+  personal_info$other_ethnicity[which(personal_info$other_ethnicity %in% c("semelai"))]<-'Semelai'
+  
+  # special case of Jakun
+  personal_info$ethnicity___2[which(personal_info$ethnicity___2 == 0 & personal_info$interview_location_med == 25)]<-1  # this is Kg Petoh, so almost certainly jakun
+  
+  # this case marked only temiar just needs to be moved
+  personal_info$ethnicity___9[which(personal_info$other_ethnicity %in% c("temiar"))] <- 1
+  personal_info$ethnicity___99[which(personal_info$other_ethnicity %in% c("temiar"))] <- 0
+  
+  ## Extract numbers associated with ethnicities 
+  # Get columns that match the pattern "ethnicity___[number]"
+  pattern_cols <- grep("ethnicity___\\d+", names(personal_info), value = TRUE)
+  
+  # Extract numbers from column names
+  numbers <- as.numeric(sub(".*___(\\d+)", "\\1", pattern_cols))
+  
+  # Create list to store results
+  result_list <- vector("list", nrow(personal_info))
+  
+  # For each row
+  for (i in 1:nrow(personal_info)) {
+    
+    # Get indices where value is 1
+    ones_indices <- which(personal_info[i, pattern_cols] == 1)
+    
+    # Store corresponding numbers in result list
+    result_list[[i]] <- numbers[ones_indices]
+  }
+  
+  ## Replace numbers with the ethnic group names
+  result_list <- lapply(result_list, FUN=function(x){
+    case_match(x,
+               0 ~ "Batek",
+               1 ~ "Jehai",
+               2 ~ "Jakun",
+               3 ~ "MahMeri",
+               4 ~ "Mendriq",
+               5 ~ "OrangKuala",
+               6 ~ "OrangSeletar",
+               7 ~ "Semai",
+               8 ~ "SemaqBeri",
+               9 ~ "Temiar",
+               10 ~ "Temuan",
+               99 ~ "Other")
+  })
+  
+  ## Replace "Other" designations in list
+  for(i in 1:length(result_list)){
+    if(sum(result_list[[i]] == "Other") > 0){
+      result_list[[i]] <- case_match(result_list[[i]], 
+                                     "Other" ~ personal_info$other_ethnicity[[i]])
+    }
+    
+    result_list[[i]][which(is.na(result_list[[i]]))] <- "Unknown"
+  }
+  
+  
+  
+  ## Assign 'Multiple' to ethnicity if more than one ethnicity is indicated
+  personal_info$number_ethnics <- unlist(lapply(result_list, length)) 
+  
+  ## Make unknown for anyone without ethnicity information
+  result_list[which(personal_info$number_ethnics == 0)] <- "Unknown"
+  
+  
+  ## Create a general "ethnicity" column for use
+  personal_info$ethnicity <- unlist(lapply(result_list, paste, collapse="_"))
+  
+  # make broader groups
+  personal_info$ethnicity_groups<-'Other/Mixed'
+  personal_info$ethnicity_groups[which(personal_info$ethnicity %in% c('Batek','Jehai','Mendriq', "Kensiu", "Lanoh", "Kintaq"))]<-'Semang'
+  personal_info$ethnicity_groups[which(personal_info$ethnicity %in% c('Temuan','Jakun','OrangSeletar','OrangKuala','Semelai'))]<-'Proto_Malay'
+  personal_info$ethnicity_groups[which(personal_info$ethnicity %in% c('Temiar','Semai','SemaqBeri','MahMeri',"Jahut"))]<-'Senoi'
+  
+  return(personal_info)
+}
+meta=compile_ethnic(personal, medical)
+
+oa_data <- left_join(medical, meta, by = "rid", suffix = c(".medical", ".personal")) #join data
+
+oa_data = left_join(traditional, oa_data, by = "vid") #join data
 
 #get age for metadata
 oa_data$age=as.numeric(as.Date(oa_data$med_date)-as.Date(oa_data$date_of_birth))/365
@@ -43,14 +152,9 @@ oa_data = oa_data[!is.na(oa_data$tid), ]
 #merge only with values I want
 interview_meta = interviews %>%
   left_join(
-    oa_data %>% dplyr::select(rid, highest_education_stage, date_of_birth, ),
-    by = c("rid_illus_malay" = "rid")
+    oa_data %>% dplyr::select(rid.x, highest_education_stage, age, ethnicity, ethnicity_groups),
+    by = c("rid_illus_malay" = "rid.x")
   )
-
-#calculate age from birth date
-interview_meta$age = as.numeric(
-  as.Date(interview_meta$date_illus_malay, format = "%m/%d/%y") -
-    as.Date(interview_meta$date_of_birth, format = "%Y-%m-%d")) / 365
 
 #make illustration interview age into a single column
 interview_meta = interview_meta %>%
@@ -84,8 +188,18 @@ interview_meta$years_schooling_illust_malay[interview_meta$rid == 97] = 0
 interview_meta$interview_location_illus_malay=ifelse(interview_meta$location_other_malay == "Melela", 46, interview_meta$interview_location_illus_malay)
 interview_meta$interview_location_illus_malay=ifelse(interview_meta$location_other_malay == "Laba", 48, interview_meta$interview_location_illus_malay)
 
+#look into ethnolinguistic groups
+table(interview_meta$interview_location_illus_malay,is.na(interview_meta$ethnicity))
+#fill in missing ethnolinguistic groups
+interview_meta$ethnicity=ifelse(is.na(interview_meta$ethnicity), register$population[match(interview_meta$interview_location_illus_malay,register$village_id)],interview_meta$ethnicity) 
+interview_meta$ethnicity=ifelse(interview_meta$ethnicity=="semai", "Semai", interview_meta$ethnicity)
+
+table(interview_meta$interview_location_illus_malay,is.na(interview_meta$ethnicity_groups))
+interview_meta$ethnicity_groups=ifelse(is.na(interview_meta$ethnicity_groups), "Senoi", interview_meta$ethnicity_groups)
+
 #add urbanicity score to meta data
 interview_meta$urb_score = urb_score$urb_score[match(interview_meta$interview_location_illus_malay, urb_score$village_id)]
+
 ############################################################
 ###      demographics                                    ###
 ############################################################
@@ -108,7 +222,7 @@ interview_meta %>%
   theme_classic(base_size = 24) + 
   theme(axis.text.x = element_text(size = 20)) + 
   labs(x = "Age (deciles)", y = "Count", fill = "Sex") + guides(fill = guide_legend(title = NULL))
-ggsave(filename="illustrations_age_gender.png", width=9, height=10)
+#ggsave(filename="illustrations_age_gender.png", width=9, height=10)
 
 #breakdown by schooling level
 table(interview_meta$highest_education_stage_illus_malay)
@@ -124,13 +238,10 @@ ggplot(interview_meta, aes(x = as.factor(highest_education_stage_illus_malay))) 
   theme(axis.text.x = element_text(size = 20)) + 
   labs(x = "Highest education level", y = "Count")  
 
-ggsave(filename="illustrations_education_level.png", width=8, height=5)
+#ggsave(filename="illustrations_education_level.png", width=8, height=5)
 ############################################################
 ###      map                                             ###
 ############################################################
-#orang Asli village register with locations
-register = read.delim("~/Library/CloudStorage/Box-Box/Audrey/Lab/genetics_illustrations/oa_village_register.csv", sep = ",")
-
 #names of villages, year visited for this project, phase of project
 villages=c() #redacted
 year = c('2025', '2025', '2024', '2024', '2023', "2023", "2025", "2025", "2025", "2025") 
@@ -165,7 +276,7 @@ plot = m + geom_jitter(data = register, aes(x = long, y = lat, color = year, sha
   xlim(101, 102.8) + ylim(3.5, 6) +
   theme(legend.title.align = 0.5, legend.text = element_text(size = 16), legend.title = element_text(size=18)) 
 
-ggsave(plot, file="~/Library/CloudStorage/Box-Box/Audrey/Lab/genetics_illustrations/location_map.pdf", height=6, width =5)
+#ggsave(plot, file="~/Library/CloudStorage/Box-Box/Audrey/Lab/genetics_illustrations/location_map.pdf", height=6, width =5)
 
 
 #turkana map
@@ -203,7 +314,7 @@ plot = m + geom_jitter(data = register, aes(x = X_longitude, y = Y_latitude, col
   scale_color_manual(values = c("2023" = "#db7f34", "2022" = "#8D0801")) + xlim(34,38) + ylim(-1,4.5) +
   theme(legend.title.align = 0.5, legend.text = element_text(size = 16), legend.title = element_text(size=18)) 
 
-ggsave(plot, file="~/Library/CloudStorage/Box-Box/Audrey/Lab/genetics_illustrations/kenya_location_map.pdf", height=6, width =5)
+#ggsave(plot, file="~/Library/CloudStorage/Box-Box/Audrey/Lab/genetics_illustrations/kenya_location_map.pdf", height=6, width =5)
 
 ############################################################
 ###     general pre questions sample-wide trends         ###
@@ -231,17 +342,30 @@ ggplot(survey_long, aes(x = question, fill = factor(response))) +
   labs(x = "Question", y = "Proportion", fill = NULL) +
   theme_classic(base_size = 20) +
   theme(axis.text.x = element_text(angle = 35, hjust = 1))
-ggsave(filename="pre_pres_responses.png", width=8, height=6)
+#ggsave(filename="pre_pres_responses.png", width=8, height=6)
 
 ############################################################
 ###     general favorites and questions                  ###
 ############################################################
 #Which illustrations were the favorites?
 table(interview_meta$best_image_malay)
-ggplot(interview_meta, aes(x = as.character(best_image_malay))) +
-  geom_bar(fill = "#485696", color = "black") + scale_x_discrete(labels = c("A", "B", "C", "D", "E", "F", "G", "H")) +
-  labs(x = "Favorite image", y = "Count") + theme_classic(base_size=24) + ylim(0,45)
-ggsave(filename="favorite_image.pdf", width=19, height=6)
+#fixed mapping
+number_to_letter <- c("A","B","C","D","F","G","E","H")
+names(number_to_letter) <- as.character(1:8)  # map "1"->"A", ..., "8"->"H"
+
+#apply the mapping
+interview_meta$best_image_letter <- number_to_letter[as.character(interview_meta$best_image_malay)]
+
+#make it a factor sorted alphabetically
+interview_meta$best_image_letter <- factor(interview_meta$best_image_letter,
+                                           levels = sort(unique(interview_meta$best_image_letter)))
+
+ggplot(interview_meta, aes(x = best_image_letter)) +
+  geom_bar(fill = "#485696", color = "black") +
+  labs(x = "Favorite image", y = "Count") +
+  theme_classic(base_size = 24) +
+  ylim(0, 45)
+#ggsave(filename="favorite_image.pdf", width=19, height=6)
 
 #how many images did people find confusing
 #make a new column summing the number of illustrations individuals find confusing
@@ -253,7 +377,7 @@ table(interview_meta$confusing_count)
 ggplot(interview_meta, aes(x = as.character(confusing_count))) +
   geom_bar(fill = "#485696", color = "black") +
   labs(x = "Number of confusing images", y = "Count") + theme_classic(base_size=24) + ylim(0,65) + scale_x_discrete(labels = c("A", "B", "C", "D", "E", "F", "G", "H")) 
-ggsave(filename="number_confusing_images.pdf", width=4, height=3)
+#ggsave(filename="number_confusing_images.pdf", width=4, height=3)
 
 #which images did people find confusing
 confusing_long = interview_meta %>%
@@ -268,17 +392,20 @@ confusing_counts = confusing_long %>%
   group_by(question) %>%
   summarise(count = n())
 
-# Create a mapping for nicer x-axis labels
-question_labels = setNames(as.character(1:8), 
-                            paste0("which_confusing_malay___", 1:8))
+fixed_mapping <- setNames(c("A", "B", "C", "D", "F", "G", "E", "H"),
+                          paste0("which_confusing_malay___", 1:8))
 
-# Plot
-ggplot(confusing_counts, aes(x = question, y = count)) +
+confusing_counts$question_letter <- fixed_mapping[confusing_counts$question]
+
+confusing_counts$question_letter <- factor(confusing_counts$question_letter,
+                                           levels = sort(unique(confusing_counts$question_letter)))
+
+ggplot(confusing_counts, aes(x = question_letter, y = count)) +
   geom_bar(stat = "identity", fill = "#485696", color = "black") +
-  scale_x_discrete(labels = question_labels) +
   labs(x = "Number confusing item", y = "Number of individuals") +
-  theme_classic(base_size = 24) + ylim(0,45) + scale_x_discrete(labels = c("A", "B", "C", "D", "E", "F", "G", "H")) 
-ggsave(filename="which_confusing_images.pdf", width=6, height=3)
+  theme_classic(base_size = 24) +
+  ylim(0, 45)
+#ggsave(filename="which_confusing_images.pdf", width=6, height=3)
 
 #how many images did people have questions about
 interview_meta = interview_meta %>%
@@ -290,7 +417,7 @@ table(interview_meta$learn_more_count)
 ggplot(interview_meta, aes(x = as.character(learn_more_count))) +
   geom_bar(fill = "#485696", color = "black") +
   labs(x = "Number reported", y = "Count") + theme_classic(base_size=24) + ylim(0,65)
-ggsave(filename="number_want_learn_more.pdf", width=4, height=3)
+#ggsave(filename="number_want_learn_more.pdf", width=4, height=3)
 
 #what images would people want to learn more about?
 learn_more_long = interview_meta %>%
@@ -308,17 +435,20 @@ learn_more_counts = learn_more_long %>%
   group_by(question) %>%
   summarise(count = n())
 
-# Create a mapping for nicer x-axis labels
-question_labels = setNames(as.character(1:8), 
-                            paste0("learn_more_malay___", 1:8))
+fixed_mapping <- setNames(c("A", "B", "C", "D", "F", "G", "E", "H"),
+                          paste0("learn_more_malay___", 1:8))
 
-# Plot
-ggplot(learn_more_counts, aes(x = question, y = count)) +
+learn_more_counts$question_letter <- fixed_mapping[learn_more_counts$question]
+
+learn_more_counts$question_letter <- factor(learn_more_counts$question_letter,
+                                           levels = sort(unique(learn_more_counts$question_letter)))
+
+ggplot(learn_more_counts, aes(x = question_letter, y = count)) +
   geom_bar(stat = "identity", fill = "#485696", color = "black") +
-  scale_x_discrete(labels = question_labels) +
-  labs(x = "Number learn_more item", y = "Count") +
-  theme_classic(base_size = 24) + ylim(0,45)
-ggsave(filename="learn_more_images.pdf", width=6, height=3)
+  labs(x = "Number confusing item", y = "Number of individuals") +
+  theme_classic(base_size = 24) +
+  ylim(0, 45)
+#ggsave(filename="learn_more_images.pdf", width=6, height=3)
 
 #what do you still have questions about?
 questions_long = interview_meta %>%
@@ -347,7 +477,7 @@ ggplot(questions_counts, aes(x = question, y = count)) +
   labs(x = "Question category", y = "Number of individuals") +
   theme_classic(base_size = 24) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
-ggsave(filename="questions.pdf", width=8, height=6)
+#ggsave(filename="questions.pdf", width=8, height=6)
 
 ############################################################
 ###     yes/no questions                                 ###
@@ -385,7 +515,7 @@ ggplot(survey_long, aes(x = question, fill = factor(response))) +
   labs(x = "Question", y = "Proportion", fill = NULL) +
   theme_classic(base_size = 20) +
   theme(axis.text.x = element_text(hjust = 1))
-ggsave(filename="yes_no_post_responses.pdf", width=14, height=)
+#ggsave(filename="yes_no_post_responses.pdf", width=14, height=)
 
 #table of percent yes & no for each question
 survey_summary = survey_long %>%
@@ -484,7 +614,7 @@ res.mca = MCA(interview_mca, quali.sup = 2:5, quanti.sup = 1)
 #look at how many contributions there are 
 fviz_screeplot(res.mca, barfill = "#485696",barcolor = "black", addlabels = TRUE, ylim = c(0, 35)) + theme_classic(base_size=20) +
   labs(x = "Principal dimension", y = "% of explained variance", title = "")
-ggsave(file="~/Library/CloudStorage/Box-Box/Audrey/Lab/genetics_illustrations/scree_mce.png", height=8, width =7)
+#ggsave(file="~/Library/CloudStorage/Box-Box/Audrey/Lab/genetics_illustrations/scree_mce.png", height=8, width =7)
 
 #visualize biplot all variables, don't use in final
 fviz_mca_biplot(res.mca,
@@ -589,7 +719,7 @@ ggplot(var_contrib_summary, aes(x=reorder(Variable, Dim.1), y=Dim.1)) +
   theme_classic(base_size=16) +
   labs(x="Question", y="Contribution to dimension 1 (%)")
 
-ggsave(file="~/Library/CloudStorage/Box-Box/Audrey/Lab/genetics_illustrations/dimension1_contrib.pdf", height=4, width =7.5)
+#ggsave(file="~/Library/CloudStorage/Box-Box/Audrey/Lab/genetics_illustrations/dimension1_contrib.pdf", height=4, width =7.5)
 
 #dimension 2
 ggplot(var_contrib_summary, aes(x=reorder(Variable, Dim.2), y=Dim.2)) +
@@ -606,7 +736,7 @@ ggplot(var_contrib_summary, aes(x=reorder(Variable, Dim.2), y=Dim.2)) +
     "hard_understand_malay"="8"))+
   theme_classic(base_size=16) +
   labs(x="Question", y="Contribution to dimension 2 (%)")
-ggsave(file="~/Library/CloudStorage/Box-Box/Audrey/Lab/genetics_illustrations/dimension2_contrib.pdf", height=4, width =7)
+#ggsave(file="~/Library/CloudStorage/Box-Box/Audrey/Lab/genetics_illustrations/dimension2_contrib.pdf", height=4, width =7)
 
 ############################################################
 ###     predictors that impact response                  ###
@@ -671,18 +801,37 @@ ggplot(pvals, aes(x = beta, y = question, xmin = beta -(1.96*st_error), xmax = b
   theme(axis.text.x = element_text(angle = 70, hjust = 1, size=16),
         legend.text = element_text(size = 16)) +
  # guides(color = guide_legend(override.aes = list(size = 4))) +
-  scale_y_discrete(labels = c(
-     "know_more_malay"="1",
-  "help_understand_malay"="2", 
-  "why_study_malay"="3",
-  "could_explain_malay"="4",
-  "watch_again_malay"="5", 
-  "tell_friend_malay"="6", 
-  "want_learn_more_malay"="7",
-  "hard_understand_malay"="8"))+
+  
   labs(color=NULL)
 
-ggsave(file="model_effects_answers_19Feb26.pdf", height=5, width =14)
+#ggsave(file="model_effects_answers_19Feb26.pdf", height=5, width =14)
+
+#make a table and rename questions
+map <- c(
+  know_more_malay="1",
+  help_understand_malay="2",
+  why_study_malay="3",
+  could_explain_malay="4",
+  watch_again_malay="5",
+  tell_friend_malay="6",
+  want_learn_more_malay="7",
+  hard_understand_malay="8"
+)
+
+pvals$question <- map[as.character(pvals$question)] 
+
+var_map <- c(
+  age_final="Age",
+  sex_illust_malay1="Sex",
+  highest_education_stage_illus_malay="Education level",
+  urb_score="Urbanicity score"
+)
+
+pvals$variable <- var_map[as.character(pvals$variable)]
+
+pvals=pvals[,c("question", "variable", "beta", "st_error","p_value", "fdr")]
+
+sheet_write(data = pvals, ss="https://docs.google.com/spreadsheets/d/12nMwy7xM4_DGemnINz2Gz2GcfR2cyIRZ3qm6mwe153k/edit?gid=0#gid=0", sheet="SI Table 6")
 
 ############################################################
 ###     all covariates in model, binary education        ###
@@ -691,7 +840,7 @@ ggsave(file="model_effects_answers_19Feb26.pdf", height=5, width =14)
 interview_meta$binary_education=ifelse(interview_meta$highest_education_stage_illus_malay==0,0,1)
 
 pvals = do.call(rbind, lapply(survey_cols, function(col) {
-  formula = as.formula(paste0(col, " ~ age_final + (sex_illust_malay) + (binary_education) + urb_score "))
+  formula = as.formula(paste0(col, " ~ age_final + (sex_illust_malay) + (binary_education) + urb_score"))
   model = glm(formula, data = interview_meta, family = binomial)
   coefs = summary(model)$coefficients
   coefs = coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]  # exclude intercept
@@ -743,7 +892,201 @@ ggplot(pvals, aes(x = beta, y = question, xmin = beta -(1.96*st_error), xmax = b
     "hard_understand_malay"="8"))+
   labs(color=NULL)
 
+map <- c(
+  know_more_malay="1",
+  help_understand_malay="2",
+  why_study_malay="3",
+  could_explain_malay="4",
+  watch_again_malay="5",
+  tell_friend_malay="6",
+  want_learn_more_malay="7",
+  hard_understand_malay="8"
+)
 
+pvals$question <- map[as.character(pvals$question)] 
+
+var_map <- c(
+  age_final="Age",
+  sex_illust_malay1="Sex",
+  binary_education="Any formal education",
+  urb_score="Urbanicity score"
+)
+
+pvals$variable <- var_map[as.character(pvals$variable)]
+
+pvals=pvals[,c("question", "variable", "beta", "st_error", "p_value", "fdr")]
+
+sheet_write(data = pvals, ss="https://docs.google.com/spreadsheets/d/12nMwy7xM4_DGemnINz2Gz2GcfR2cyIRZ3qm6mwe153k/edit?gid=0#gid=0", sheet="SI Table 7")
+############################################################
+###     include presentation format as predictor         ###
+############################################################
+survey_cols = c(
+  "know_more_malay",
+  "help_understand_malay",
+  "why_study_malay",
+  "watch_again_malay",
+  "could_explain_malay",
+  "tell_friend_malay",
+  "want_learn_more_malay",
+  "hard_understand_malay"
+)
+
+#binomial model with all potential variables in the plot
+#first make sure all columns are correct type
+interview_meta$sex_illust_malay=as.factor(interview_meta$sex_illust_malay)
+interview_meta$highest_education_stage_illus_malay=as.integer(interview_meta$highest_education_stage_illus_malay)
+interview_meta$interview_location_illus_malay=as.factor(interview_meta$interview_location_illus_malay)
+
+interview_meta$format=as.factor(ifelse(interview_meta$interview_location_illus_malay %in% c("0", "46", "48"),"laminated", "ppt"))
+
+summary(lm(interview_meta$urb_score~factor(interview_meta$format)))$r.squared
+
+pvals = do.call(rbind, lapply(survey_cols, function(col) {
+  formula = as.formula(paste0(col, " ~ age_final + (sex_illust_malay) + (highest_education_stage_illus_malay) + (urb_score) + format"))
+  model = lm(formula, data = interview_meta)
+  coefs = summary(model)$coefficients
+  coefs = coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]  # exclude intercept
+  data.frame(
+    question = col,
+    variable = rownames(coefs),
+    beta = coefs[, "Estimate"],
+    p_value = coefs[, "Pr(>|t|)"],
+    st_error=coefs[,"Std. Error"],
+    row.names = NULL
+  )
+}))
+pvals
+
+#make an fdr
+pvals$fdr = p.adjust(pvals$p_value, method = "fdr")
+
+#significance column for graph
+pvals$Significant = ifelse(
+  pvals$fdr < 0.05, "FDR<0.05",
+  ifelse(pvals$p_value < 0.05, "p<0.05", "n.s.")
+)
+
+#factor so outputs as like in graph
+pvals$Significant = factor(pvals$Significant, levels = c("FDR<0.05", "p<0.05", "n.s."))
+pvals$question = factor(pvals$question, levels = c( "hard_understand_malay", "want_learn_more_malay","tell_friend_malay","watch_again_malay", "could_explain_malay","why_study_malay","help_understand_malay","know_more_malay"))
+
+ggplot(pvals, aes(x = beta, y = question, xmin = beta -(1.96*st_error), xmax = beta + (1.96*st_error), color = Significant)) +
+  geom_vline(xintercept = 0, size = 1.5, linetype = "dashed") +
+  facet_wrap(~variable, nrow=1, scales = "free_x", labeller = as_labeller(c(
+    age_final = "Age", sex_illust_malay1 = "Sex", highest_education_stage_illus_malay = "Highest\neducation", urb_score = "Urbanicity"))) +
+  geom_point(size = 6, position = position_dodge(width = 0.4)) +  # offset points
+  geom_errorbar(width = 0.1, size = 1.3, position = position_dodge(width = 0.4)) +
+  labs(x = "Effect size", y = "Question") +
+  scale_color_manual(values = c("FDR<0.05"="#7EA172",  
+                                "p<0.05"="#C7CB85",
+                                "n.s."="gray"))+
+  theme_bw(base_size = 22) +
+  theme(axis.text.x = element_text(angle = 70, hjust = 1, size=16),
+        legend.text = element_text(size = 16)) +
+  # guides(color = guide_legend(override.aes = list(size = 4))) +
+  
+  labs(color=NULL)
+
+#ggsave(file="model_effects_answers_19Feb26.pdf", height=5, width =14)
+
+#make a table and rename questions
+map <- c(
+  know_more_malay="1",
+  help_understand_malay="2",
+  why_study_malay="3",
+  could_explain_malay="4",
+  watch_again_malay="5",
+  tell_friend_malay="6",
+  want_learn_more_malay="7",
+  hard_understand_malay="8"
+)
+
+pvals$question <- map[as.character(pvals$question)] 
+
+var_map <- c(
+  age_final="Age",
+  sex_illust_malay1="Sex",
+  highest_education_stage_illus_malay="Education level",
+  urb_score="Urbanicity score"
+)
+
+pvals$variable <- var_map[as.character(pvals$variable)]
+
+pvals=pvals[,c("question", "variable", "beta", "st_error","p_value", "fdr")]
+
+sheet_write(data = pvals, ss="https://docs.google.com/spreadsheets/d/12nMwy7xM4_DGemnINz2Gz2GcfR2cyIRZ3qm6mwe153k/edit?gid=0#gid=0", sheet="SI Table 6")
+
+############################################################
+###     include ethnolinguistic group                    ###
+############################################################
+survey_cols = c(
+  "know_more_malay",
+  "help_understand_malay",
+  "why_study_malay",
+  "watch_again_malay",
+  "could_explain_malay",
+  "tell_friend_malay",
+  "want_learn_more_malay",
+  "hard_understand_malay"
+)
+
+table(interview_meta$ethnicity)
+interview_meta_ethn=interview_meta[interview_meta$ethnicity!="Batek_Temiar",]
+
+#binomial model with all potential variables in the plot
+#first make sure all columns are correct type
+interview_meta_ethn$sex_illust_malay=as.factor(interview_meta_ethn$sex_illust_malay)
+interview_meta_ethn$highest_education_stage_illus_malay=as.integer(interview_meta_ethn$highest_education_stage_illus_malay)
+interview_meta_ethn$interview_location_illus_malay=as.factor(interview_meta_ethn$interview_location_illus_malay)
+
+interview_meta_ethn$ethnicity=as.factor(interview_meta_ethn$ethnicity)
+
+pvals = do.call(rbind, lapply(survey_cols, function(col) {
+  formula = as.formula(paste0(col, " ~ age_final + (sex_illust_malay) + (highest_education_stage_illus_malay) + (urb_score) + ethnicity"))
+  model = lm(formula, data = interview_meta_ethn)
+  coefs = summary(model)$coefficients
+  coefs = coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]  # exclude intercept
+  data.frame(
+    question = col,
+    variable = rownames(coefs),
+    beta = coefs[, "Estimate"],
+    p_value = coefs[, "Pr(>|t|)"],
+    st_error=coefs[,"Std. Error"],
+    row.names = NULL
+  )
+}))
+pvals
+
+#make an fdr
+pvals$fdr = p.adjust(pvals$p_value, method = "fdr")
+
+#make a table and rename questions
+map <- c(
+  know_more_malay="1",
+  help_understand_malay="2",
+  why_study_malay="3",
+  could_explain_malay="4",
+  watch_again_malay="5",
+  tell_friend_malay="6",
+  want_learn_more_malay="7",
+  hard_understand_malay="8"
+)
+
+pvals$question <- map[as.character(pvals$question)] 
+
+var_map <- c(
+  age_final="Age",
+  sex_illust_malay1="Sex",
+  highest_education_stage_illus_malay="Education level",
+  urb_score="Urbanicity score",
+  ethnicityTemiar="Ethnolinguistic group"
+)
+
+pvals$variable <- var_map[as.character(pvals$variable)]
+
+pvals=pvals[,c("question", "variable", "beta", "st_error","p_value", "fdr")]
+
+sheet_write(data = pvals, ss="https://docs.google.com/spreadsheets/d/12nMwy7xM4_DGemnINz2Gz2GcfR2cyIRZ3qm6mwe153k/edit?gid=0#gid=0", sheet="SI Table 9")
 
 ############################################################
 ###     look at covariates across interview locs         ###
@@ -753,7 +1096,7 @@ p=ggplot(interview_meta, aes(x = interview_location_illus_malay, y = age_final))
   geom_violin() + geom_jitter(size = 3) +
   labs(y = "Age", x = "Interview location") +
   theme_bw(base_size = 22) 
-ggsave(p, file="~/Library/CloudStorage/Box-Box/Audrey/Lab/genetics_illustrations/location_ages.png", height=6, width =8)
+#ggsave(p, file="~/Library/CloudStorage/Box-Box/Audrey/Lab/genetics_illustrations/location_ages.png", height=6, width =8)
 
 #years of schooling
 p=ggplot(interview_meta, aes(x = interview_location_illus_malay, y = years_schooling_illust_malay)) +
@@ -761,7 +1104,7 @@ p=ggplot(interview_meta, aes(x = interview_location_illus_malay, y = years_schoo
   labs(y = "Years of schooling", x = "Interview location") +
   theme_bw(base_size = 22) 
 
-ggsave(p, file="~/Library/CloudStorage/Box-Box/Audrey/Lab/genetics_illustrations/location_schooling.png", height=6, width =8)
+#ggsave(p, file="~/Library/CloudStorage/Box-Box/Audrey/Lab/genetics_illustrations/location_schooling.png", height=6, width =8)
 
 #sex proportion
 # Calculate proportions
@@ -777,4 +1120,4 @@ p=ggplot(prop_data, aes(x = interview_location_illus_malay, y = prop, fill = sex
   labs(x = "Interview Location", y = "Sex proportion", fill = "Sex") +
   theme_bw(base_size = 30) 
 
-ggsave(p, file="~/Library/CloudStorage/Box-Box/Audrey/Lab/genetics_illustrations/location_sex_proportion.png", height=6, width =8)
+#ggsave(p, file="~/Library/CloudStorage/Box-Box/Audrey/Lab/genetics_illustrations/location_sex_proportion.png", height=6, width =8)
